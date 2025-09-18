@@ -12,7 +12,7 @@ export interface Supplier {
 
 export interface ReconciliationRecord {
   id: string;
-  date: string;
+  date?: string;
   description: string;
   amount: number;
   items?: ProductItem[];

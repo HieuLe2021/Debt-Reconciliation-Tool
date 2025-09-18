@@ -1,3 +1,4 @@
+
 import { GoogleGenAI, Type } from "@google/genai";
 import type { ReconciliationRecord, ReconciliationResult, ProductItem, ComparedItem } from '../types';
 
@@ -6,6 +7,21 @@ if (!process.env.API_KEY) {
 }
 
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY! });
+
+/**
+ * Custom error class to hold details about a failed AI response parse.
+ */
+export class GeminiParseError extends Error {
+  rawResponse: string;
+  repairedAttempt: string;
+
+  constructor(message: string, rawResponse: string, repairedAttempt: string) {
+    super(message);
+    this.name = 'GeminiParseError';
+    this.rawResponse = rawResponse;
+    this.repairedAttempt = repairedAttempt;
+  }
+}
 
 const fileToGenerativePart = (file: File) => {
   return new Promise<{ inlineData: { data: string, mimeType: string } }>((resolve, reject) => {
@@ -51,12 +67,13 @@ const recordSchema = {
             items: productItemSchema,
         },
     },
-    required: ['id', 'date', 'description', 'amount'],
+    required: ['id', 'description', 'amount'],
 };
 
 /**
  * Attempts to repair a potentially malformed JSON string.
  * It extracts the main JSON object/array and fixes common errors like trailing commas.
+ * This version robustly finds the end of the JSON by balancing brackets/braces.
  * @param jsonString The raw string response from the AI.
  * @returns A cleaned-up string that is more likely to be valid JSON.
  */
@@ -70,36 +87,75 @@ const repairJson = (jsonString: string): string => {
         repaired = match[1].trim();
     }
 
-    // 2. Isolate the main JSON object or array
+    // 2. Find the start of the main JSON object or array
     const firstBrace = repaired.indexOf('{');
     const firstBracket = repaired.indexOf('[');
-    const lastBrace = repaired.lastIndexOf('}');
-    const lastBracket = repaired.lastIndexOf(']');
-
+    
     let startIndex = -1;
-    let endIndex = -1;
-
-    // Determine the start of the JSON content (either { or [)
     if (firstBracket !== -1 && (firstBracket < firstBrace || firstBrace === -1)) {
         startIndex = firstBracket;
     } else if (firstBrace !== -1) {
         startIndex = firstBrace;
     }
-    
-    // Determine the end of the JSON content
-    if (startIndex !== -1) {
-      if (repaired.startsWith('[')) {
-          endIndex = lastBracket;
-      } else {
-          endIndex = lastBrace;
-      }
-    }
-    
-    if (startIndex !== -1 && endIndex > startIndex) {
-        repaired = repaired.substring(startIndex, endIndex + 1);
+
+    // If no JSON object/array found, just return the repaired string and let it fail downstream
+    if (startIndex === -1) {
+        return repaired;
     }
 
-    // 3. Fix common syntax errors, like trailing commas
+    const startChar = repaired[startIndex];
+    const endChar = startChar === '{' ? '}' : ']';
+    
+    let depth = 0;
+    let endIndex = -1;
+
+    // 3. Balance brackets/braces to find the true end of the JSON, ignoring them inside strings
+    let inString = false;
+    let escape = false;
+
+    for (let i = startIndex; i < repaired.length; i++) {
+        const char = repaired[i];
+
+        if (inString) {
+            if (escape) {
+                escape = false;
+            } else if (char === '\\') {
+                escape = true;
+            } else if (char === '"') {
+                inString = false;
+            }
+            continue; // Ignore brackets/braces inside strings
+        }
+
+        if (char === '"') {
+            inString = true;
+        } else if (char === startChar) {
+            depth++;
+        } else if (char === endChar) {
+            depth--;
+        }
+
+        if (depth === 0) {
+            endIndex = i;
+            break; // Found the end of the main structure
+        }
+    }
+
+    if (endIndex !== -1) {
+        repaired = repaired.substring(startIndex, endIndex + 1);
+    } else {
+       // Fallback for unbalanced JSON: use the old, less reliable method
+       const lastBracketOrBrace = startChar === '{' ? repaired.lastIndexOf('}') : repaired.lastIndexOf(']');
+       if (lastBracketOrBrace > startIndex) {
+         repaired = repaired.substring(startIndex, lastBracketOrBrace + 1);
+       }
+       // If still no valid end is found, we'll just use the substring from the start
+       else {
+         repaired = repaired.substring(startIndex);
+       }
+    }
+
+    // 4. Fix common syntax errors, like trailing commas
     repaired = repaired.replace(/,\s*([}\]])/g, '$1');
 
     return repaired;
@@ -115,7 +171,7 @@ export const extractDataFromFile = async (file: File): Promise<ReconciliationRec
       throw new Error(`Không thể xử lý tệp "${file.name}". Lỗi: ${fileError.message || 'Lỗi không xác định'}`);
   }
   
-  const extractPrompt = `Phân tích tệp đính kèm và trích xuất tất cả các mục giao dịch. Đối với mỗi mục, cung cấp mã, ngày, mô tả, tổng số tiền, và danh sách sản phẩm chi tiết nếu có. Toàn bộ phản hồi của bạn BẮT BUỘC phải là một mảng JSON hợp lệ, không chứa bất kỳ văn bản giải thích nào khác.`;
+  const extractPrompt = `Phân tích tệp đính kèm và trích xuất tất cả các mục giao dịch. ĐIỀU QUAN TRỌNG: Hãy bỏ qua và không trích xuất bất kỳ dòng nào có dấu hiệu bị gạch bỏ hoặc gạch ngang. Chỉ trích xuất những mục hợp lệ. Đối với mỗi mục, cung cấp mã, ngày, mô tả, tổng số tiền, và danh sách sản phẩm chi tiết nếu có. Toàn bộ phản hồi của bạn BẮT BUỘC phải là một mảng JSON hợp lệ, không chứa bất kỳ văn bản giải thích nào khác.`;
 
   const response = await ai.models.generateContent({
       model: "gemini-2.5-flash",
@@ -147,7 +203,11 @@ export const extractDataFromFile = async (file: File): Promise<ReconciliationRec
         repairedAttempt: repairedJson,
         error: e,
       });
-      throw new Error("Lỗi! AI đã trả về một định dạng không hợp lệ và không thể tự động sửa chữa. Vui lòng thử lại, AI có thể cho kết quả tốt hơn ở lần sau.");
+      throw new GeminiParseError(
+        "AI đã trả về một định dạng không hợp lệ và không thể tự động sửa chữa. Vui lòng thử lại, AI có thể cho kết quả tốt hơn ở lần sau.",
+        rawResponseText,
+        repairedJson
+      );
   }
 };
 
@@ -176,6 +236,7 @@ YÊU CẦU:
 2.  **Phân loại kết quả**: Với mỗi cặp so khớp hoặc mỗi mục không khớp, hãy phân loại vào một trong các trạng thái sau: 'Khớp', 'Chênh lệch', 'Chỉ có ở NCC', 'Chỉ có ở Wecare'.
 3.  **Tạo tóm tắt**: Cung cấp một bản tóm tắt ngắn gọn bằng tiếng Việt về kết quả đối chiếu.
 4.  **Tính toán tổng hợp**: Tính tổng số tiền của mỗi bên và chênh lệch.
+5.  **Ghi chú có chọn lọc**: Chỉ điền thông tin vào trường \`details\` khi có sự chênh lệch hoặc mục chỉ tồn tại ở một bên. Đối với các mục có trạng thái 'Khớp', hãy để trống trường \`details\`.
 
 QUAN TRỌNG: Toàn bộ phản hồi của bạn BẮT BUỘC phải là một đối tượng JSON hợp lệ duy nhất, tuân thủ nghiêm ngặt schema đã cho. Không thêm bất kỳ văn bản giải thích nào ngoài JSON.`;
 
@@ -190,7 +251,7 @@ QUAN TRỌNG: Toàn bộ phản hồi của bạn BẮT BUỘC phải là một 
         status: { type: Type.STRING, enum: ['Khớp', 'Chênh lệch', 'Chỉ có ở NCC', 'Chỉ có ở Wecare'] },
         supplierItem: nullableProductItemSchema,
         systemItem: nullableProductItemSchema,
-        details: { type: Type.STRING, description: 'Giải thích ngắn gọn về chênh lệch (nếu có)' }
+        details: { type: Type.STRING, description: 'Chỉ cung cấp giải thích khi có chênh lệch hoặc thiếu sót. Để trống nếu trạng thái là "Khớp".' }
     },
     required: ['status', 'details']
   };
@@ -233,6 +294,10 @@ QUAN TRỌNG: Toàn bộ phản hồi của bạn BẮT BUỘC phải là một 
         repairedAttempt: repairedJson,
         error: e,
       });
-      throw new Error("Lỗi! AI đã trả về một định dạng không hợp lệ và không thể tự động sửa chữa. Vui lòng thử lại, AI có thể cho kết quả tốt hơn ở lần sau.");
+      throw new GeminiParseError(
+        "AI đã trả về một định dạng không hợp lệ và không thể tự động sửa chữa. Vui lòng thử lại, AI có thể cho kết quả tốt hơn ở lần sau.",
+        rawResponseText,
+        repairedJson
+      );
   }
 };
