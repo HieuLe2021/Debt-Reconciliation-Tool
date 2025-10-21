@@ -1,11 +1,12 @@
-
-import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import type { Supplier, ReconciliationRecord, ProductItem, ExistingMapping } from './types';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import type { Supplier, ReconciliationRecord, ReconciliationResult, ProductItem, ExistingMapping, ComparedItem } from './types';
 import { POWER_AUTOMATE_URL, DYNAMICS_API_BASE_URL } from './constants';
-import { extractDataFromFile, GeminiParseError } from './services/geminiService';
+import { extractDataFromFile, reconcileData, GeminiParseError } from './services/geminiService';
 import DataTable from './components/DataTable';
 import Spinner from './components/Spinner';
+import ReconciliationResultDisplay from './components/ReconciliationResultDisplay';
 import SkuMappingModal from './components/SkuMappingModal';
+import { ComparisonStatus } from './types';
 import FeedbackModal from './components/FeedbackModal';
 
 
@@ -106,7 +107,7 @@ const AppHeader: React.FC<{
   return (
     <header className="bg-white dark:bg-card dark:border-b dark:border-border shadow-sm flex-shrink-0">
       <div className="px-4 sm:px-6 lg:px-8 py-4 flex flex-wrap justify-between items-center gap-4">
-        <h1 className="text-2xl font-bold text-primary">SKU Mapping</h1>
+        <h1 className="text-2xl font-bold text-primary">Đối Chiếu Công Nợ Phải Trả</h1>
         <div className="flex items-center gap-2">
             <div className="relative w-full md:w-80" ref={dropdownRef}>
             <input
@@ -161,11 +162,15 @@ const AppHeader: React.FC<{
 
 const SupplierDataPanel: React.FC<{
   onFilesSelected: (files: File[]) => void;
+  onReadFile: () => void;
   onClear: () => void;
+  onRemoveFile: (index: number) => void;
   onDateChange: (date: string | null) => void;
+  uploadedFiles: File[];
   processedFiles: File[];
   extractedData: ReconciliationRecord[];
   isReadingFile: boolean;
+  isReconciling: boolean;
   supplierDateRange: { start: string | null; end: string | null };
 }> = (props) => {
   const totalItems = props.extractedData.reduce((acc, record) => {
@@ -177,7 +182,7 @@ const SupplierDataPanel: React.FC<{
 
   const datePickerControl = props.extractedData.length > 0 ? (
     <div className="flex items-center text-sm">
-      <label htmlFor="start-date-filter" className="font-semibold whitespace-nowrap text-gray-600 dark:text-muted-foreground">Ngày HĐ:</label>
+      <label htmlFor="start-date-filter" className="font-semibold whitespace-nowrap text-gray-600 dark:text-muted-foreground">Ngày HD:</label>
       <input
           id="start-date-filter"
           type="date"
@@ -193,18 +198,8 @@ const SupplierDataPanel: React.FC<{
       <h2 className="text-xl font-bold text-gray-800 dark:text-foreground mb-4 flex-shrink-0">1. Dữ liệu Nhà Cung Cấp (Tải lên)</h2>
       <div className="flex items-start space-x-4 flex-shrink-0 mb-4">
         <div className="flex-grow flex items-center flex-wrap gap-2">
-           <label htmlFor="file-upload" className={`cursor-pointer py-2 px-4 rounded-full border-0 text-sm font-semibold bg-primary/10 text-primary ${props.isReadingFile ? 'opacity-50 cursor-not-allowed' : 'hover:bg-primary/20'} inline-flex items-center justify-center whitespace-nowrap`}>
-              {props.isReadingFile ? (
-                <>
-                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary mr-2"></div>
-                  <span>Đang đọc...</span>
-                </>
-              ) : (
-                'Chọn tệp'
-              )}
-            </label>
-            <input id="file-upload" type="file" onChange={(e) => e.target.files && props.onFilesSelected(Array.from(e.target.files))} accept=".xlsx,.xls,.pdf,image/*" multiple className="hidden" disabled={props.isReadingFile}/>
-
+          <label htmlFor="file-upload" className="cursor-pointer py-2 px-4 rounded-full border-0 text-sm font-semibold bg-primary/10 text-primary hover:bg-primary/20 inline-block whitespace-nowrap">Chọn tệp</label>
+          <input id="file-upload" type="file" onChange={(e) => e.target.files && props.onFilesSelected(Array.from(e.target.files))} accept=".xlsx,.xls,.pdf,image/*" multiple className="hidden" />
           {props.processedFiles.map((file, index) => (
             <div key={`${file.name}-${index}`} className="flex items-center text-sm bg-green-50 dark:bg-green-900/50 text-green-800 dark:text-green-300 pl-2 pr-3 py-1 rounded-full border border-green-200 dark:border-green-700">
               <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-1 flex-shrink-0" viewBox="0 0 20 20" fill="currentColor">
@@ -213,9 +208,18 @@ const SupplierDataPanel: React.FC<{
               <span className="text-slate-700 dark:text-slate-300 truncate max-w-[200px]" title={file.name}>{file.name}</span>
             </div>
           ))}
+          {props.uploadedFiles.map((file, index) => (
+            <div key={`${file.name}-${index}`} className="flex items-center text-sm bg-slate-50 dark:bg-secondary pl-3 pr-1 py-1 rounded-full border border-slate-200 dark:border-border">
+              <span className="text-slate-700 dark:text-slate-300 truncate max-w-[200px]" title={file.name}>{file.name}</span>
+              <button onClick={() => props.onRemoveFile(index)} className="ml-2 text-red-400 hover:text-red-600 dark:text-red-500 dark:hover:text-red-400 text-xl font-light leading-none flex items-center justify-center h-5 w-5 rounded-full hover:bg-red-100 dark:hover:bg-red-900/50" aria-label={`Remove ${file.name}`}>&times;</button>
+            </div>
+          ))}
         </div>
         <div className="flex space-x-2 flex-shrink-0">
-          <button onClick={props.onClear} disabled={(props.extractedData.length === 0 && props.processedFiles.length === 0) || props.isReadingFile} className="flex items-center justify-center px-4 py-2 bg-red-500 text-white font-semibold rounded-lg shadow-md hover:bg-red-600 disabled:bg-slate-400 dark:disabled:bg-slate-600 disabled:cursor-not-allowed transition-colors duration-200">Xoá</button>
+          <button onClick={props.onReadFile} disabled={props.isReadingFile || props.uploadedFiles.length === 0} className="flex items-center justify-center px-4 py-2 bg-primary text-primary-foreground font-semibold rounded-lg shadow-md hover:bg-accent-hover disabled:bg-slate-400 dark:disabled:bg-slate-600 disabled:cursor-not-allowed transition-colors duration-200">
+            {props.isReadingFile ? <Spinner /> : 'Đọc File'}
+          </button>
+          <button onClick={props.onClear} disabled={(props.extractedData.length === 0 && props.uploadedFiles.length === 0 && props.processedFiles.length === 0) || props.isReadingFile || props.isReconciling} className="flex items-center justify-center px-4 py-2 bg-red-500 text-white font-semibold rounded-lg shadow-md hover:bg-red-600 disabled:bg-slate-400 dark:disabled:bg-slate-600 disabled:cursor-not-allowed transition-colors duration-200">Xoá</button>
         </div>
       </div>
 
@@ -256,7 +260,7 @@ const SystemDataPanel: React.FC<{
 
   let title = '2. Dữ liệu trên Wecare';
     if (supplierDateRange.start) {
-        title = `Dữ liệu Wecare (Ngày tạo đơn ${formatDate(supplierDateRange.start)} ±10 ngày)`;
+        title = `Dữ liệu Wecare (Ngày HĐ ${formatDate(supplierDateRange.start)} ±10 ngày)`;
     }
 
 
@@ -292,9 +296,12 @@ const App: React.FC = () => {
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [selectedSupplierId, setSelectedSupplierId] = useState<string>('');
   
+  const [uploadedFiles, setUploadedFiles] = useState<File[]>([]);
   const [processedFiles, setProcessedFiles] = useState<File[]>([]);
   const [extractedData, setExtractedData] = useState<ReconciliationRecord[]>([]);
   const [systemData, setSystemData] = useState<ReconciliationRecord[]>([]);
+  const [reconciliationResult, setReconciliationResult] = useState<ReconciliationResult | null>(null);
+  const [reconciliationTime, setReconciliationTime] = useState<number | null>(null);
   const [supplierDateRange, setSupplierDateRange] = useState<{ start: string | null, end: string | null }>({ start: null, end: null });
 
   const [isSkuMappingModalOpen, setIsSkuMappingModalOpen] = useState(false);
@@ -302,19 +309,19 @@ const App: React.FC = () => {
   const [existingMappings, setExistingMappings] = useState<ExistingMapping[]>([]);
 
   const [accessToken, setAccessToken] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState({ suppliers: true, systemData: false, readingFile: false, existingMappings: false });
+  const [isLoading, setIsLoading] = useState({ suppliers: true, systemData: false, readingFile: false, reconciling: false, existingMappings: false });
   
   const [error, setError] = useState<string | null>(null);
   const [rawErrorData, setRawErrorData] = useState<string | null>(null);
   const [isErrorModalOpen, setIsErrorModalOpen] = useState(false);
   const [isFeedbackModalOpen, setIsFeedbackModalOpen] = useState(false);
 
-  const setErrorMessage = useCallback((message: string | null) => {
+  const setErrorMessage = (message: string | null) => {
     setError(message);
     if (message === null) {
       setRawErrorData(null);
     }
-  }, []);
+  }
 
   const fetchAccessToken = useCallback(async () => {
     try {
@@ -340,7 +347,7 @@ const App: React.FC = () => {
       setErrorMessage(err.message.includes('Failed to fetch') ? 'Lỗi Mạng: Không thể kết nối đến Power Automate để lấy token. Vui lòng kiểm tra cấu hình CORS.' : (err.message || 'Không thể lấy token xác thực.'));
       setIsLoading(prev => ({ ...prev, suppliers: false }));
     }
-  }, [setErrorMessage]);
+  }, []);
 
   const fetchSuppliers = useCallback(async (token: string) => {
     try {
@@ -359,7 +366,7 @@ const App: React.FC = () => {
     } finally {
       setIsLoading(prev => ({ ...prev, suppliers: false }));
     }
-  }, [setErrorMessage]);
+  }, []);
 
   const fetchSystemData = useCallback(async (supplierId: string, dateRange: {start: string | null}) => {
     const supplier = suppliers.find(s => s.id === supplierId);
@@ -376,6 +383,7 @@ const App: React.FC = () => {
 
     setIsLoading(prev => ({ ...prev, systemData: true }));
     setErrorMessage(null);
+    setReconciliationResult(null);
 
     try {
         const centerDate = new Date(dateRange.start);
@@ -389,15 +397,14 @@ const App: React.FC = () => {
         const endDateString = endDate.toISOString().split('T')[0];
 
         const filters = [
-            `crdfd_nhacungcap eq '${supplier.name.replace(/'/g, "''")}'`,
+            `cr44a_tenoituong eq '${supplier.name.replace(/'/g, "''")}'`,
             `createdon ge ${startDateString}T00:00:00Z`,
             `createdon le ${endDateString}T23:59:59Z`
         ];
         
-        const filterString = filters.join(' and ');
-        const filterQuery = `$filter=${encodeURIComponent(filterString)}`;
-        const selectQuery = `$select=crdfd_gia,crdfd_soluongsanpham,crdfd_tensanphamtext2,createdon`;
-        const apiUrl = `${DYNAMICS_API_BASE_URL}/api/data/v9.2/crdfd_buyorderdetailses?${selectQuery}&${filterQuery}`;
+        const filterQuery = `$filter=${filters.join(' and ')}`;
+        const selectQuery = `$select=cr44a_ongia,cr44a_vtay,cr44a_tenhangcal,createdon,cr44a_soluongmua,cr44a_ngayhachtoan`;
+        const apiUrl = `${DYNAMICS_API_BASE_URL}/api/data/v9.2/cr44a_muahangchitiets?${selectQuery}&${filterQuery}`;
         
         const response = await fetch(apiUrl, { headers: { 'Authorization': `Bearer ${accessToken}` } });
         if (!response.ok) throw new Error(`Lỗi tải dữ liệu hệ thống: ${await getApiErrorMessage(response)}`);
@@ -410,11 +417,11 @@ const App: React.FC = () => {
         }
 
         const mappedData: ReconciliationRecord[] = records.map((item: any) => {
-            const date = (item.createdon).split('T')[0];
-            const quantity = parseFloat(item.crdfd_soluongsanpham) || 0;
-            const unitPrice = parseFloat(item.crdfd_gia) || 0;
+            const date = item.cr44a_ngayhachtoan ? (item.cr44a_ngayhachtoan).split('T')[0] : (item.createdon).split('T')[0];
+            const quantity = parseFloat(item.cr44a_soluongmua) || 0;
+            const unitPrice = parseFloat(item.cr44a_ongia) || 0;
             const totalPrice = quantity * unitPrice;
-            const name = item.crdfd_tensanphamtext2 || 'N/A';
+            const name = item.cr44a_tenhangcal || 'N/A';
             return {
                 id: crypto.randomUUID(),
                 date,
@@ -430,7 +437,7 @@ const App: React.FC = () => {
     } finally {
         setIsLoading(prev => ({ ...prev, systemData: false }));
     }
-}, [accessToken, suppliers, setErrorMessage]);
+}, [accessToken, suppliers]);
 
   const fetchExistingMappings = useCallback(async (supplierId: string) => {
     const supplier = suppliers.find(s => s.id === supplierId);
@@ -443,10 +450,9 @@ const App: React.FC = () => {
     setErrorMessage(null); // Clear previous errors on new fetch
     try {
       const supplierName = supplier.name.replace(/'/g, "''");
-      const filterString = `crdfd_supplier eq '${supplierName}'`;
-      const filterQuery = `$filter=${encodeURIComponent(filterString)}`;
-      const selectQuery = `$select=crdfd_product_name,crdfd_supplier_product_name,crdfd_supplier`;
-      const apiUrl = `${DYNAMICS_API_BASE_URL}/api/data/v9.2/crdfd_mapping_sku_2025s?${selectQuery}&${filterQuery}`;
+      const filter = `$filter=crdfd_supplier eq '${supplierName}'`;
+      const select = `$select=crdfd_product_name,crdfd_supplier_product_name,crdfd_supplier`;
+      const apiUrl = `${DYNAMICS_API_BASE_URL}/api/data/v9.2/crdfd_mapping_sku_2025s?${select}&${filter}`;
   
       const response = await fetch(apiUrl, {
         headers: { 'Authorization': `Bearer ${accessToken}` }
@@ -472,7 +478,7 @@ const App: React.FC = () => {
     } finally {
       setIsLoading(prev => ({ ...prev, existingMappings: false }));
     }
-  }, [accessToken, suppliers, setErrorMessage]);
+  }, [accessToken, suppliers]);
 
 
   // --- Effect Chain ---
@@ -485,12 +491,20 @@ const App: React.FC = () => {
     }
   }, [selectedSupplierId, supplierDateRange, fetchSystemData, fetchExistingMappings, accessToken]);
 
-  const handleReadFile = async (filesToRead: File[]) => {
-    if (filesToRead.length === 0) return;
+  const handleFileChange = (files: File[]) => {
+    setUploadedFiles(prev => [...prev, ...files]);
+    setReconciliationResult(null);
+    setErrorMessage(null);
+    const fileInput = document.getElementById('file-upload') as HTMLInputElement;
+    if (fileInput) fileInput.value = '';
+  };
+
+  const handleReadFile = async () => {
+    if (uploadedFiles.length === 0) return;
     setIsLoading(prev => ({ ...prev, readingFile: true }));
     setErrorMessage(null);
 
-    const results = await Promise.allSettled(filesToRead.map(extractDataFromFile));
+    const results = await Promise.allSettled(uploadedFiles.map(extractDataFromFile));
     const successfulData: ReconciliationRecord[] = [];
     const errorMessages: string[] = [];
     let firstRawError: string | null = null;
@@ -500,7 +514,7 @@ const App: React.FC = () => {
         successfulData.push(...result.value);
       } else {
         const reason = result.reason as Error;
-        errorMessages.push(`Tệp "${filesToRead[i].name}": ${reason.message}`);
+        errorMessages.push(`Tệp "${uploadedFiles[i].name}": ${reason.message}`);
         if (reason instanceof GeminiParseError && !firstRawError) {
           firstRawError = reason.rawResponse;
         }
@@ -523,33 +537,149 @@ const App: React.FC = () => {
         .filter((d): d is Date => d !== null && !isNaN(d.getTime()));
 
       if (validDates.length > 0) {
+        // Instead of a range, pick the most recent date from the uploaded documents
+        // as the primary invoice date for comparison.
         const maxDate = new Date(Math.max(...validDates.map(d => d.getTime())));
         
         setSupplierDateRange({ 
             start: maxDate.toISOString().split('T')[0],
-            end: null,
+            end: null, // End date is no longer used for fetching system data
         });
       } else {
         setSupplierDateRange({ start: null, end: null });
       }
     }
     
-    setProcessedFiles(prev => [...prev, ...filesToRead]);
+    setProcessedFiles(prev => [...prev, ...uploadedFiles]);
+    setUploadedFiles([]);
     setIsLoading(prev => ({ ...prev, readingFile: false }));
-  };
-  
-  const handleFileChange = async (files: File[]) => {
-    setErrorMessage(null);
-    const fileInput = document.getElementById('file-upload') as HTMLInputElement;
-    if (fileInput) fileInput.value = '';
-    await handleReadFile(files);
   };
 
   const handleClear = () => {
     setExtractedData([]);
+    setUploadedFiles([]);
     setProcessedFiles([]);
+    setReconciliationResult(null);
     setErrorMessage(null);
     setSupplierDateRange({ start: null, end: null });
+    setReconciliationTime(null);
+  };
+  
+  const handleReconcile = async () => {
+    if (extractedData.length === 0) return;
+    setIsLoading(prev => ({ ...prev, reconciling: true }));
+    setErrorMessage(null);
+    setReconciliationTime(null);
+    const startTime = performance.now();
+
+    try {
+        // 1. Flatten data and create a case-insensitive lookup map for existing mappings.
+        const allSupplierItems = extractedData.flatMap(record =>
+            (record.items && record.items.length > 0)
+            ? record.items
+            : [{ name: record.description, quantity: 1, unitPrice: record.amount, totalPrice: record.amount }]
+        );
+        const allSystemItems = systemData.flatMap(record => record.items || []);
+        const mappingMap = new Map<string, string>(existingMappings.map(m => [m.crdfd_supplier_product_name.toLowerCase(), m.crdfd_product_name]));
+
+        // 2. Pre-processing: Handle items with existing mappings first.
+        const preProcessedItems: ComparedItem[] = [];
+        const itemsForAI_Supplier: ProductItem[] = [];
+        const usedSystemItemIndices = new Set<number>();
+
+        allSupplierItems.forEach(supplierItem => {
+            const systemProductName = mappingMap.get(supplierItem.name.toLowerCase());
+            if (systemProductName) {
+                const systemItemIndex = allSystemItems.findIndex((sysItem, index) => 
+                    sysItem.name === systemProductName && !usedSystemItemIndices.has(index)
+                );
+                
+                if (systemItemIndex !== -1) {
+                    usedSystemItemIndices.add(systemItemIndex);
+                    const systemItem = allSystemItems[systemItemIndex];
+                    const isMatched = supplierItem.quantity === systemItem.quantity && supplierItem.unitPrice === systemItem.unitPrice;
+                    preProcessedItems.push({
+                        status: isMatched ? ComparisonStatus.MATCHED : ComparisonStatus.DISCREPANCY,
+                        supplierItem,
+                        systemItem,
+                        details: isMatched ? '' : `Chênh lệch SL/ĐG. NCC: ${supplierItem.quantity} @ ${supplierItem.unitPrice}, Wecare: ${systemItem.quantity} @ ${systemItem.unitPrice}`
+                    });
+                } else {
+                    preProcessedItems.push({
+                        status: ComparisonStatus.SUPPLIER_ONLY,
+                        supplierItem,
+                        systemItem: null,
+                        details: 'Sản phẩm đã được mapping nhưng không có trong dữ liệu Wecare kỳ này.'
+                    });
+                }
+            } else {
+                itemsForAI_Supplier.push(supplierItem);
+            }
+        });
+
+        const itemsForAI_System = allSystemItems.filter((_, index) => !usedSystemItemIndices.has(index));
+
+        // 3. Set up initial UI with pre-processed results and placeholders for AI.
+        const totalSupplierAmount = allSupplierItems.reduce((sum, item) => sum + item.totalPrice, 0);
+        const preProcessedSystemAmount = preProcessedItems.reduce((sum, item) => sum + (item.systemItem?.totalPrice || 0), 0);
+        
+        const aiProcessingPlaceholders: ComparedItem[] = itemsForAI_Supplier.map(item => ({
+            status: ComparisonStatus.PROCESSING,
+            supplierItem: item,
+            systemItem: null,
+            details: 'Đang chờ AI phân tích...'
+        }));
+
+        const initialComparedItems = [...preProcessedItems, ...aiProcessingPlaceholders];
+        
+        setReconciliationResult({
+            summary: 'Đang xử lý... Kết quả sơ bộ từ mapping đã lưu. Chờ AI hoàn tất...',
+            totalSupplierAmount,
+            totalSystemAmount: preProcessedSystemAmount,
+            difference: totalSupplierAmount - preProcessedSystemAmount,
+            comparedItems: initialComparedItems
+        });
+        
+        // 4. Call AI with only the remaining, unmapped items.
+        let aiResult: ReconciliationResult = { 
+            summary: 'Không có dữ liệu cần AI xử lý.', 
+            totalSupplierAmount: 0, 
+            totalSystemAmount: 0, 
+            difference: 0, 
+            comparedItems: [] 
+        };
+
+        if (itemsForAI_Supplier.length > 0 || itemsForAI_System.length > 0) {
+            const supplierRecordsForAI: ReconciliationRecord[] = [{ id: 'unmatched-sup', amount: 0, description: '', items: itemsForAI_Supplier }];
+            const systemRecordsForAI: ReconciliationRecord[] = [{ id: 'unmatched-sys', amount: 0, description: '', items: itemsForAI_System }];
+            aiResult = await reconcileData(supplierRecordsForAI, systemRecordsForAI);
+        }
+
+        // 5. Combine final results and update the state.
+        setReconciliationResult(() => {
+            const finalSummary = `${preProcessedItems.length > 0 ? `Đã tự động xử lý ${preProcessedItems.length} sản phẩm dựa trên mapping đã lưu.` : ''} ${aiResult.summary}`;
+            const finalComparedItems = [...preProcessedItems, ...aiResult.comparedItems];
+            const finalSystemAmount = finalComparedItems.reduce((sum, item) => sum + (item.systemItem?.totalPrice || 0), 0);
+
+            return {
+                summary: finalSummary.trim(),
+                totalSupplierAmount,
+                totalSystemAmount: finalSystemAmount,
+                difference: totalSupplierAmount - finalSystemAmount,
+                comparedItems: finalComparedItems
+            };
+        });
+
+    } catch (err: any) {
+      setError(err.message || "Lỗi trong quá trình đối chiếu.");
+       if (err instanceof GeminiParseError) {
+        setRawErrorData(err.rawResponse);
+      }
+    } finally {
+      const endTime = performance.now();
+      setReconciliationTime((endTime - startTime) / 1000); // in seconds
+      setIsLoading(prev => ({ ...prev, reconciling: false }));
+    }
   };
   
   const handleOpenSkuMappingModal = () => {
@@ -661,14 +791,6 @@ const App: React.FC = () => {
   };
 
   const selectedSupplierName = suppliers.find(s => s.id === selectedSupplierId)?.name || 'Không rõ';
-  
-  const sortedSystemData = useMemo(() => {
-    return [...systemData].sort((a, b) => {
-        if (!a.date) return 1;
-        if (!b.date) return -1;
-        return new Date(b.date).getTime() - new Date(a.date).getTime();
-    });
-  }, [systemData]);
 
   return (
     <div className="h-screen bg-slate-200 dark:bg-background text-slate-800 dark:text-foreground flex flex-col relative">
@@ -696,83 +818,109 @@ const App: React.FC = () => {
         </div>
       )}
 
-      <>
-        <AppHeader
-          suppliers={suppliers}
-          selectedSupplierId={selectedSupplierId}
-          onSupplierChange={setSelectedSupplierId}
-          isLoading={isLoading.suppliers || isLoading.systemData}
-          onOpenFeedback={() => setIsFeedbackModalOpen(true)}
-        />
-
-        <main className="flex-grow px-4 sm:px-6 lg:px-8 py-8 flex flex-col min-h-0">
-          {error && (
-            <div className="bg-red-100 border-red-400 text-red-700 dark:bg-red-900/50 dark:border-red-700/60 dark:text-red-300 px-4 py-3 rounded-lg relative mb-6 flex-shrink-0" role="alert">
-              <div className="flex justify-between items-start">
-                <div>
-                  <strong className="font-bold">Lỗi!</strong>
-                  <span className="block sm:inline ml-2 whitespace-pre-wrap">{error}</span>
-                </div>
-                {rawErrorData && (
-                  <button
-                    onClick={() => setIsErrorModalOpen(true)}
-                    className="ml-4 flex-shrink-0 px-3 py-1 border border-red-500 hover:bg-red-200 dark:border-red-600 dark:text-red-300 dark:hover:bg-red-800/50 text-sm font-semibold rounded-md transition-colors"
-                  >
-                    Xem chi tiết
-                  </button>
-                )}
-              </div>
-            </div>
-          )}
-
-          {isLoading.suppliers && !error ? (
-            <div className="text-center py-10 bg-white dark:bg-card rounded-xl shadow-md flex-grow flex items-center justify-center">
-              <div className="flex flex-col items-center">
-                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
-                <p className="mt-3 text-slate-500 dark:text-muted-foreground">{!accessToken ? 'Đang lấy token xác thực...' : 'Đang tải danh sách nhà cung cấp...'}</p>
-              </div>
-            </div>
-          ) : (
-            <>
-              <div className={`flex-grow flex flex-row gap-8 min-h-0`}>
-                <SupplierDataPanel
-                  processedFiles={processedFiles}
-                  extractedData={extractedData}
-                  isReadingFile={isLoading.readingFile}
-                  supplierDateRange={supplierDateRange}
-                  onFilesSelected={handleFileChange}
-                  onClear={handleClear}
-                  onDateChange={handleSupplierDateChange}
-                />
-                <SystemDataPanel
-                  isFetching={isLoading.systemData}
-                  data={sortedSystemData}
-                  supplierDateRange={supplierDateRange}
-                />
-              </div>
-
-              <div className="py-8 flex-shrink-0">
-                <div className="flex justify-center">
-                  <button
-                    onClick={handleOpenSkuMappingModal}
-                    disabled={isLoading.existingMappings || extractedData.length === 0 || systemData.length === 0}
-                    className="flex items-center justify-center w-full max-w-lg md:max-w-xs px-6 py-3 bg-green-600 text-white text-lg font-bold rounded-lg shadow-lg hover:bg-green-700 disabled:bg-slate-400 dark:disabled:bg-slate-600 disabled:cursor-not-allowed transform hover:scale-105 transition-all duration-200"
-                  >
-                     {isLoading.existingMappings ? <><Spinner /> <span className="ml-2">Đang kiểm tra...</span></> : 'SKU Mapping'}
-                  </button>
-                </div>
-              </div>
-            </>
-          )}
-        </main>
-        <SkuMappingModal
-          isOpen={isSkuMappingModalOpen}
-          onClose={() => setIsSkuMappingModalOpen(false)}
-          mappings={skuMappingsToShow}
-          onSave={handleSaveMappings}
+      {reconciliationResult ? (
+        <ReconciliationResultDisplay
+          result={reconciliationResult}
+          executionTime={reconciliationTime}
+          onStartOver={handleClear}
           supplierName={selectedSupplierName}
         />
-      </>
+      ) : (
+        <>
+          <AppHeader
+            suppliers={suppliers}
+            selectedSupplierId={selectedSupplierId}
+            onSupplierChange={setSelectedSupplierId}
+            isLoading={isLoading.suppliers || isLoading.systemData}
+            onOpenFeedback={() => setIsFeedbackModalOpen(true)}
+          />
+
+          <main className="flex-grow px-4 sm:px-6 lg:px-8 py-8 flex flex-col min-h-0">
+            {error && (
+              <div className="bg-red-100 border-red-400 text-red-700 dark:bg-red-900/50 dark:border-red-700/60 dark:text-red-300 px-4 py-3 rounded-lg relative mb-6 flex-shrink-0" role="alert">
+                <div className="flex justify-between items-start">
+                  <div>
+                    <strong className="font-bold">Lỗi!</strong>
+                    <span className="block sm:inline ml-2 whitespace-pre-wrap">{error}</span>
+                  </div>
+                  {rawErrorData && (
+                    <button
+                      onClick={() => setIsErrorModalOpen(true)}
+                      className="ml-4 flex-shrink-0 px-3 py-1 border border-red-500 hover:bg-red-200 dark:border-red-600 dark:text-red-300 dark:hover:bg-red-800/50 text-sm font-semibold rounded-md transition-colors"
+                    >
+                      Xem chi tiết
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {isLoading.suppliers && !error ? (
+              <div className="text-center py-10 bg-white dark:bg-card rounded-xl shadow-md flex-grow flex items-center justify-center">
+                <div className="flex flex-col items-center">
+                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+                  <p className="mt-3 text-slate-500 dark:text-muted-foreground">{!accessToken ? 'Đang lấy token xác thực...' : 'Đang tải danh sách nhà cung cấp...'}</p>
+                </div>
+              </div>
+            ) : (
+              <>
+                <div className={`flex-grow flex flex-row gap-8 min-h-0`}>
+                  <SupplierDataPanel
+                    uploadedFiles={uploadedFiles}
+                    processedFiles={processedFiles}
+                    extractedData={extractedData}
+                    isReadingFile={isLoading.readingFile}
+                    isReconciling={isLoading.reconciling}
+                    supplierDateRange={supplierDateRange}
+                    onFilesSelected={handleFileChange}
+                    onRemoveFile={(index) => setUploadedFiles(files => files.filter((_, i) => i !== index))}
+                    onReadFile={handleReadFile}
+                    onClear={handleClear}
+                    onDateChange={handleSupplierDateChange}
+                  />
+                  <SystemDataPanel
+                    isFetching={isLoading.systemData}
+                    data={systemData}
+                    supplierDateRange={supplierDateRange}
+                  />
+                </div>
+
+                <div className="py-8 flex-shrink-0">
+                  <div className="flex flex-col items-center gap-4 md:flex-row md:justify-center">
+                    <button
+                      onClick={handleOpenSkuMappingModal}
+                      disabled={isLoading.reconciling || isLoading.existingMappings || extractedData.length === 0 || systemData.length === 0}
+                      className="flex items-center justify-center w-full max-w-lg md:max-w-xs px-6 py-3 bg-green-600 text-white text-lg font-bold rounded-lg shadow-lg hover:bg-green-700 disabled:bg-slate-400 dark:disabled:bg-slate-600 disabled:cursor-not-allowed transform hover:scale-105 transition-all duration-200"
+                    >
+                       {isLoading.existingMappings ? <><Spinner /> <span className="ml-2">Đang kiểm tra...</span></> : 'SKU Mapping'}
+                    </button>
+                    <button
+                      onClick={handleReconcile}
+                      disabled={isLoading.reconciling || extractedData.length === 0}
+                      className="flex items-center justify-center w-full max-w-lg md:max-w-xs px-6 py-3 bg-primary text-primary-foreground text-lg font-bold rounded-lg shadow-lg hover:bg-accent-hover disabled:bg-slate-400 dark:disabled:bg-slate-600 disabled:cursor-not-allowed transform hover:scale-105 transition-all duration-200"
+                    >
+                      {isLoading.reconciling ? (
+                        <>
+                          <Spinner />
+                          <span className="ml-2">Đang đối chiếu...</span>
+                        </>
+                        ) : 'Đối chiếu'
+                      }
+                    </button>
+                  </div>
+                </div>
+              </>
+            )}
+          </main>
+          <SkuMappingModal
+            isOpen={isSkuMappingModalOpen}
+            onClose={() => setIsSkuMappingModalOpen(false)}
+            mappings={skuMappingsToShow}
+            onSave={handleSaveMappings}
+            supplierName={selectedSupplierName}
+          />
+        </>
+      )}
       <FeedbackModal 
         isOpen={isFeedbackModalOpen}
         onClose={() => setIsFeedbackModalOpen(false)}
