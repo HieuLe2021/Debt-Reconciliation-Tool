@@ -1,3 +1,5 @@
+declare var XLSX: any;
+
 export interface ProductItem {
   name: string;
   quantity: number;
@@ -18,24 +20,24 @@ export interface ReconciliationRecord {
   items?: ProductItem[];
 }
 
-export enum ComparisonStatus {
-  MATCHED = 'Khớp',
-  DISCREPANCY = 'Chênh lệch',
-  SUPPLIER_ONLY = 'Chỉ có ở NCC',
-  SYSTEM_ONLY = 'Chỉ có ở Wecare',
+export interface ExistingMapping {
+  crdfd_product_name: string;
+  crdfd_supplier_product_name: string;
+  crdfd_supplier: string;
 }
 
+// FIX: Add missing types for the reconciliation result display component.
 export interface ComparedItem {
-  status: ComparisonStatus;
-  supplierItem: ProductItem | null;
-  systemItem: ProductItem | null;
+  supplierItem?: ProductItem | null;
+  systemItem?: ProductItem | null;
+  status: string;
   details: string;
 }
 
 export interface ReconciliationResult {
-  summary: string;
   totalSupplierAmount: number;
   totalSystemAmount: number;
   difference: number;
   comparedItems: ComparedItem[];
+  summary: string;
 }

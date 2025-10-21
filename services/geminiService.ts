@@ -1,6 +1,10 @@
 
+
 import { GoogleGenAI, Type } from "@google/genai";
-import type { ReconciliationRecord, ReconciliationResult, ProductItem, ComparedItem } from '../types';
+import type { ReconciliationRecord } from '../types';
+
+// FIX: Declare the XLSX variable, which is expected to be available globally from a script tag.
+declare var XLSX: any;
 
 if (!process.env.API_KEY) {
     throw new Error("API_KEY environment variable not set. This application cannot function without an API key.");
@@ -23,25 +27,63 @@ export class GeminiParseError extends Error {
   }
 }
 
-const fileToGenerativePart = (file: File) => {
-  return new Promise<{ inlineData: { data: string, mimeType: string } }>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      if (typeof reader.result !== 'string') {
-        return reject(new Error("Failed to read file as base64 string."));
-      }
-      const base64Data = reader.result.split(',')[1];
-      resolve({
-        inlineData: {
-          data: base64Data,
-          mimeType: file.type,
-        },
-      });
-    };
-    reader.onerror = () => reject(new Error(`Error reading file: ${reader.error?.message || 'Unknown FileReader error'}`));
-    reader.readAsDataURL(file);
-  });
+/**
+ * Pre-processes a file before sending it to the Gemini API.
+ * - For Excel files, it reads the content and converts the first sheet to a CSV string.
+ * - For other files (PDF, images), it converts them to a base64 string.
+ * @param file The file to process.
+ * @returns A promise that resolves to a part object suitable for the Gemini API.
+ */
+const fileToPart = async (file: File): Promise<{ text: string } | { inlineData: { data: string, mimeType: string } }> => {
+    // Check for Excel MIME types
+    if (file.type === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' || file.type === 'application/vnd.ms-excel') {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                try {
+                    const data = event.target?.result;
+                    if (!data) {
+                        throw new Error("File reader result is empty.");
+                    }
+                    const workbook = XLSX.read(data, { type: 'array' });
+                    // Get the first sheet name
+                    const sheetName = workbook.SheetNames[0];
+                    if (!sheetName) {
+                        throw new Error("Excel file contains no sheets.");
+                    }
+                    const worksheet = workbook.Sheets[sheetName];
+                    // Convert the sheet to CSV format
+                    const csvData = XLSX.utils.sheet_to_csv(worksheet);
+                    resolve({ text: csvData });
+                } catch (e: any) {
+                    reject(new Error(`Lỗi khi đọc tệp Excel: ${e.message}`));
+                }
+            };
+            reader.onerror = () => reject(new Error(`Không thể đọc tệp: ${reader.error?.message}`));
+            reader.readAsArrayBuffer(file);
+        });
+    }
+
+    // Default behavior for PDF/Images: convert to base64
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => {
+            if (typeof reader.result !== 'string') {
+                return reject(new Error("Failed to read file as base64 string."));
+            }
+            const base64Data = reader.result.split(',')[1];
+            resolve({
+                inlineData: {
+                    data: base64Data,
+                    mimeType: file.type,
+                },
+            });
+        };
+        reader.onerror = () => reject(new Error(`Error reading file: ${reader.error?.message || 'Unknown FileReader error'}`));
+        reader.readAsDataURL(file);
+    });
 };
+
 
 const productItemSchema = {
     type: Type.OBJECT,
@@ -163,22 +205,34 @@ const repairJson = (jsonString: string): string => {
 
 
 export const extractDataFromFile = async (file: File): Promise<ReconciliationRecord[]> => {
-  let imagePart;
+  let part;
   try {
-      imagePart = await fileToGenerativePart(file);
+      part = await fileToPart(file);
   } catch (fileError: any) {
       console.error(`Error processing file ${file.name}:`, fileError);
       throw new Error(`Không thể xử lý tệp "${file.name}". Lỗi: ${fileError.message || 'Lỗi không xác định'}`);
   }
   
-  const extractPrompt = `Phân tích tệp đính kèm và trích xuất tất cả các mục giao dịch. ĐIỀU QUAN TRỌNG: Hãy bỏ qua và không trích xuất bất kỳ dòng nào có dấu hiệu bị gạch bỏ hoặc gạch ngang. Chỉ trích xuất những mục hợp lệ. Đối với mỗi mục, cung cấp mã, ngày, mô tả, tổng số tiền, và danh sách sản phẩm chi tiết nếu có. Toàn bộ phản hồi của bạn BẮT BUỘC phải là một mảng JSON hợp lệ, không chứa bất kỳ văn bản giải thích nào khác.`;
+  const promptInstructions = `Phân tích tài liệu và trích xuất tất cả các mục giao dịch.
+
+QUY TẮC BẮT BUỘC:
+1.  **Ghép Tên và Quy Cách**: Nếu có cột 'Tên sản phẩm'/'Mặt hàng' và cột 'Quy cách' riêng biệt, bạn PHẢI ghép chúng thành một tên sản phẩm duy nhất. Ví dụ: 'Mặt hàng' là 'Bulong inox 304' và 'Quy cách' là '6x30' thì tên sản phẩm trích xuất phải là "Bulong inox 304 6x30".
+2.  **Bỏ qua dòng bị gạch**: Không trích xuất bất kỳ dòng nào có dấu hiệu bị gạch bỏ hoặc gạch ngang.
+3.  **Cung cấp đầy đủ thông tin**: Đối với mỗi mục, cung cấp mã, ngày, mô tả, tổng số tiền, và danh sách sản phẩm chi tiết nếu có.
+4.  **Chỉ trả về JSON**: Toàn bộ phản hồi của bạn BẮT BUỘC phải là một mảng JSON hợp lệ, không chứa bất kỳ văn bản giải thích nào khác.
+`;
+
+    const isTextData = 'text' in part;
+    const extractPrompt = isTextData 
+        ? `${promptInstructions}\n\nDữ liệu cần phân tích là văn bản CSV sau (được trích xuất từ một bảng tính):` 
+        : promptInstructions;
 
   const response = await ai.models.generateContent({
       model: "gemini-2.5-flash",
       contents: { 
           parts: [
               { text: extractPrompt },
-              imagePart,
+              part,
           ] 
       },
       config: {
@@ -211,93 +265,61 @@ export const extractDataFromFile = async (file: File): Promise<ReconciliationRec
   }
 };
 
-export const reconcileData = async (supplierData: ReconciliationRecord[], systemData: ReconciliationRecord[]): Promise<ReconciliationResult> => {
-  const allSupplierItems = supplierData.flatMap(record =>
-    (record.items && record.items.length > 0)
-      ? record.items
-      : [{ name: record.description, quantity: 1, unitPrice: record.amount, totalPrice: record.amount }]
-  );
-  const allSystemItems = systemData.flatMap(record => record.items || []);
-
-  const prompt = `Bạn là một AI kiểm toán viên tài chính chuyên nghiệp. Nhiệm vụ của bạn là đối chiếu chi tiết từng dòng sản phẩm giữa hai bộ dữ liệu: Dữ liệu từ Nhà Cung Cấp (NCC) và Dữ liệu trên Wecare của chúng tôi.
-
-Dữ liệu NCC:
-\`\`\`json
-${JSON.stringify(allSupplierItems, null, 2)}
-\`\`\`
-
-Dữ liệu Wecare:
-\`\`\`json
-${JSON.stringify(allSystemItems, null, 2)}
-\`\`\`
-
-YÊU CẦU:
-1.  **So khớp thông minh**: So khớp các sản phẩm dựa trên tên (cho phép sai khác nhỏ về chính tả/mô tả), sau đó kiểm tra số lượng và đơn giá.
-2.  **Phân loại kết quả**: Với mỗi cặp so khớp hoặc mỗi mục không khớp, hãy phân loại vào một trong các trạng thái sau: 'Khớp', 'Chênh lệch', 'Chỉ có ở NCC', 'Chỉ có ở Wecare'.
-3.  **Tạo tóm tắt**: Cung cấp một bản tóm tắt ngắn gọn bằng tiếng Việt về kết quả đối chiếu.
-4.  **Tính toán tổng hợp**: Tính tổng số tiền của mỗi bên và chênh lệch.
-5.  **Ghi chú có chọn lọc**: Chỉ điền thông tin vào trường \`details\` khi có sự chênh lệch hoặc mục chỉ tồn tại ở một bên. Đối với các mục có trạng thái 'Khớp', hãy để trống trường \`details\`.
+export const analyzeFeedback = async (feedbackText: string, userSelectedType: 'bug' | 'suggestion'): Promise<{ category: string; summary: string; }> => {
+    const prompt = `Bạn là một AI phân tích phản hồi người dùng. Hãy phân loại phản hồi sau đây thành 'bug', 'feature_request', hoặc 'other'. Sau đó, tóm tắt ý chính của phản hồi trong một câu.
+Phản hồi: "${feedbackText}"
+Loại người dùng chọn: "${userSelectedType}"
 
 QUAN TRỌNG: Toàn bộ phản hồi của bạn BẮT BUỘC phải là một đối tượng JSON hợp lệ duy nhất, tuân thủ nghiêm ngặt schema đã cho. Không thêm bất kỳ văn bản giải thích nào ngoài JSON.`;
 
-  const nullableProductItemSchema = {
-    ...productItemSchema,
-    nullable: true,
-  };
-
-  const comparedItemSchema = {
-    type: Type.OBJECT,
-    properties: {
-        status: { type: Type.STRING, enum: ['Khớp', 'Chênh lệch', 'Chỉ có ở NCC', 'Chỉ có ở Wecare'] },
-        supplierItem: nullableProductItemSchema,
-        systemItem: nullableProductItemSchema,
-        details: { type: Type.STRING, description: 'Chỉ cung cấp giải thích khi có chênh lệch hoặc thiếu sót. Để trống nếu trạng thái là "Khớp".' }
-    },
-    required: ['status', 'details']
-  };
-
-  const response = await ai.models.generateContent({
-    model: "gemini-2.5-flash",
-    contents: {
-        parts: [{ text: prompt }]
-    },
-    config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-                summary: { type: Type.STRING, description: 'Tóm tắt kết quả đối chiếu bằng tiếng Việt' },
-                totalSupplierAmount: { type: Type.NUMBER, description: 'Tổng số tiền từ dữ liệu nhà cung cấp' },
-                totalSystemAmount: { type: Type.NUMBER, description: 'Tổng số tiền từ dữ liệu Wecare' },
-                difference: { type: Type.NUMBER, description: 'Chênh lệch (supplier - wecare)' },
-                comparedItems: {
-                    type: Type.ARRAY,
-                    items: comparedItemSchema,
-                    description: 'Danh sách chi tiết các mục đã được đối chiếu'
-                },
+    try {
+        const response = await ai.models.generateContent({
+            model: "gemini-2.5-flash",
+            contents: {
+                parts: [{ text: prompt }]
             },
-            required: ['summary', 'totalSupplierAmount', 'totalSystemAmount', 'difference', 'comparedItems']
+            config: {
+                responseMimeType: "application/json",
+                responseSchema: {
+                    type: Type.OBJECT,
+                    properties: {
+                        category: {
+                            type: Type.STRING,
+                            description: "Loại phản hồi: 'bug', 'feature_request', hoặc 'other'.",
+                            enum: ['bug', 'feature_request', 'other']
+                        },
+                        summary: {
+                            type: Type.STRING,
+                            description: "Tóm tắt phản hồi trong một câu."
+                        }
+                    },
+                    required: ['category', 'summary']
+                }
+            }
+        });
+        
+        const rawResponseText = response.text;
+        let repairedJson = "";
+        try {
+            repairedJson = repairJson(rawResponseText);
+            const result = JSON.parse(repairedJson);
+            return result as { category: string; summary: string; };
+        } catch (e) {
+             console.error({
+                message: "Failed to parse Gemini response for feedback analysis.",
+                rawResponse: rawResponseText,
+                repairedAttempt: repairedJson,
+                error: e,
+            });
+            // Fallback to a simple structure if parsing fails
+            return {
+                category: userSelectedType,
+                summary: feedbackText.substring(0, 100) + (feedbackText.length > 100 ? '...' : '')
+            };
         }
-    }
-  });
 
-  const rawResponseText = response.text;
-  let repairedJson = "";
-  try {
-      repairedJson = repairJson(rawResponseText);
-      const aiResult = JSON.parse(repairedJson) as ReconciliationResult;
-      return aiResult;
-  } catch (e) {
-      console.error({
-        message: "Failed to parse Gemini response for reconciliation.",
-        rawResponse: rawResponseText,
-        repairedAttempt: repairedJson,
-        error: e,
-      });
-      throw new GeminiParseError(
-        "AI đã trả về một định dạng không hợp lệ và không thể tự động sửa chữa. Vui lòng thử lại, AI có thể cho kết quả tốt hơn ở lần sau.",
-        rawResponseText,
-        repairedJson
-      );
-  }
+    } catch (apiError: any) {
+        console.error("Gemini API error during feedback analysis:", apiError);
+        throw new Error("Lỗi khi giao tiếp với AI để phân tích phản hồi.");
+    }
 };

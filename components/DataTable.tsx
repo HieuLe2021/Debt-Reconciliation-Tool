@@ -1,4 +1,3 @@
-
 import React from 'react';
 import type { ReconciliationRecord } from '../types';
 
@@ -7,11 +6,10 @@ interface DataTableProps {
   data: ReconciliationRecord[];
   icon: React.ReactNode;
   totalCount?: number;
+  headerControls?: React.ReactNode;
 }
 
-const DataTable: React.FC<DataTableProps> = ({ title, data, icon, totalCount }) => {
-  const totalAmount = data.reduce((sum, item) => sum + item.amount, 0);
-
+const DataTable: React.FC<DataTableProps> = ({ title, data, icon, totalCount, headerControls }) => {
   // Create a flattened list of all items for rendering
   const allItems = data.flatMap(record => {
     if (record.items && record.items.length > 0) {
@@ -38,16 +36,19 @@ const DataTable: React.FC<DataTableProps> = ({ title, data, icon, totalCount }) 
 
   return (
     <div className="h-full flex flex-col">
-      <div className="flex items-center justify-between mb-4">
+      <div className="flex items-center justify-between mb-4 gap-4 flex-wrap">
         <div className="flex items-center">
             {icon}
             <h3 className="text-xl font-bold text-gray-800 dark:text-foreground ml-3">{title}</h3>
         </div>
-        {totalCount !== undefined && totalCount > 0 && (
-            <div className="font-semibold text-sm text-blue-800 bg-blue-100 dark:text-blue-200 dark:bg-blue-900/80 px-3 py-1 rounded-lg">
-                Tổng số: {totalCount} dòng
-            </div>
-        )}
+        <div className="flex items-center gap-4">
+            {headerControls}
+            {totalCount !== undefined && totalCount > 0 && (
+                <div className="font-semibold text-sm text-blue-800 bg-blue-100 dark:text-blue-200 dark:bg-blue-900/80 px-3 py-1 rounded-lg whitespace-nowrap">
+                    Tổng số: {totalCount} dòng
+                </div>
+            )}
+        </div>
       </div>
       <div className="flex-grow overflow-y-auto">
         <table className="w-full text-sm text-left text-gray-600 dark:text-muted-foreground">
@@ -84,12 +85,6 @@ const DataTable: React.FC<DataTableProps> = ({ title, data, icon, totalCount }) 
             )}
           </tbody>
         </table>
-      </div>
-      <div className="mt-4 pt-4 border-t-2 border-gray-200 dark:border-border flex justify-end items-baseline">
-        <span className="text-base font-bold text-gray-700 dark:text-muted-foreground">Tổng cộng:</span>
-        <span className="text-2xl font-bold text-[#04A1B3] ml-4 font-mono">
-          {totalAmount.toLocaleString('vi-VN')} VNĐ
-        </span>
       </div>
     </div>
   );

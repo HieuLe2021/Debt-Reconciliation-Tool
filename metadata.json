@@ -1,5 +1,5 @@
 {
-  "name": "Supplier Debt Reconciliation Tool",
+  "name": "SKU Mapping",
   "description": "An AI-powered tool to compare and reconcile accounts payable data from supplier documents against internal system records.",
   "requestFramePermissions": []
 }

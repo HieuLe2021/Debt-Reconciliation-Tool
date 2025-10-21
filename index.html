@@ -4,14 +4,15 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Đối chiếu công nợ NCC</title>
+    <title>SKU Mapping</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
       // On page load or when changing themes, best to add inline in `head` to avoid FOUC
-      if (localStorage.getItem('theme') === 'dark' || (!('theme' in localStorage) && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
-        document.documentElement.classList.add('dark')
+      // Defaults to dark mode unless 'light' is explicitly set in localStorage.
+      if (localStorage.getItem('theme') === 'light') {
+        document.documentElement.classList.remove('dark');
       } else {
-        document.documentElement.classList.remove('dark')
+        document.documentElement.classList.add('dark');
       }
     </script>
     <script>
@@ -20,32 +21,34 @@
         theme: {
           extend: {
             colors: {
-              border: 'hsl(217, 33%, 21%)',
-              input: 'hsl(217, 33%, 21%)',
-              ring: 'hsl(210, 90%, 44%)',
-              background: 'hsl(222, 47%, 11.2%)',
-              foreground: 'hsl(210, 40%, 98%)',
+              border: '#374151',
+              input: '#1F2937',
+              ring: '#22d3ee', // cyan-400
+              background: '#111827',
+              foreground: '#F3F4F6',
               primary: {
-                DEFAULT: 'hsl(210, 90%, 44%)',
-                foreground: 'hsl(210, 40%, 98%)',
+                DEFAULT: '#06b6d4', // cyan-500
+                foreground: '#FFFFFF', // accent-text
               },
               secondary: {
-                DEFAULT: 'hsl(217, 33%, 18%)',
-                foreground: 'hsl(210, 40%, 98%)',
+                DEFAULT: '#1F2937', // container
+                foreground: '#E5E7EB', // container-text
               },
               muted: {
-                DEFAULT: 'hsl(217, 25%, 16%)',
-                foreground: 'hsl(215, 20%, 62%)',
+                DEFAULT: '#1F2937', // container
+                foreground: '#9CA3AF', // text-secondary
               },
               card: {
-                DEFAULT: 'hsl(222, 47%, 11.2%)',
-                foreground: 'hsl(210, 40%, 98%)',
+                DEFAULT: '#1F2937', // container
+                foreground: '#E5E7EB', // container-text
               },
+              'accent-hover': '#0891b2' // cyan-600
             },
           },
         },
       }
     </script>
+    <script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
   <script type="importmap">
 {
   "imports": {
