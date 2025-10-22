@@ -6,8 +6,9 @@ import DataTable from './components/DataTable';
 import Spinner from './components/Spinner';
 import ReconciliationResultDisplay from './components/ReconciliationResultDisplay';
 import SkuMappingModal from './components/SkuMappingModal';
+// FIX: Import SystemDataPanel component.
+import SystemDataPanel from './components/SystemDataPanel';
 import { ComparisonStatus } from './types';
-import FeedbackModal from './components/FeedbackModal';
 
 
 // --- Helper Functions ---
@@ -77,8 +78,7 @@ const AppHeader: React.FC<{
   selectedSupplierId: string;
   onSupplierChange: (id: string) => void;
   isLoading: boolean;
-  onOpenFeedback: () => void;
-}> = ({ suppliers, selectedSupplierId, onSupplierChange, isLoading, onOpenFeedback }) => {
+}> = ({ suppliers, selectedSupplierId, onSupplierChange, isLoading }) => {
   const [inputText, setInputText] = useState('');
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -108,7 +108,7 @@ const AppHeader: React.FC<{
     <header className="bg-white dark:bg-card dark:border-b dark:border-border shadow-sm flex-shrink-0">
       <div className="px-4 sm:px-6 lg:px-8 py-4 flex flex-wrap justify-between items-center gap-4">
         <h1 className="text-2xl font-bold text-primary">Đối Chiếu Công Nợ Phải Trả</h1>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-4">
             <div className="relative w-full md:w-80" ref={dropdownRef}>
             <input
                 type="text"
@@ -143,16 +143,6 @@ const AppHeader: React.FC<{
                 </div>
             )}
             </div>
-            <button
-                onClick={onOpenFeedback}
-                className="p-2 rounded-full text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-secondary focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-ring focus:ring-offset-background dark:focus:ring-offset-card"
-                aria-label="Gửi phản hồi"
-                title="Gửi phản hồi"
-            >
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-                </svg>
-            </button>
             <ThemeToggle />
         </div>
       </div>
@@ -194,7 +184,7 @@ const SupplierDataPanel: React.FC<{
   ) : null;
 
   return (
-    <div className="bg-white dark:bg-card rounded-xl shadow-md p-6 flex flex-col w-1/2 border dark:border-border">
+    <div className="bg-white dark:bg-card rounded-xl shadow-md p-6 flex flex-col lg:w-1/2 border dark:border-border">
       <h2 className="text-xl font-bold text-gray-800 dark:text-foreground mb-4 flex-shrink-0">1. Dữ liệu Nhà Cung Cấp (Tải lên)</h2>
       <div className="flex items-start space-x-4 flex-shrink-0 mb-4">
         <div className="flex-grow flex items-center flex-wrap gap-2">
@@ -236,60 +226,6 @@ const SupplierDataPanel: React.FC<{
   );
 };
 
-const SystemDataPanel: React.FC<{
-  isFetching: boolean;
-  data: ReconciliationRecord[];
-  supplierDateRange: { start: string | null; end: string | null };
-}> = ({ isFetching, data, supplierDateRange }) => {
-  const totalItems = data.reduce((acc, record) => {
-    if (record.items && record.items.length > 0) {
-      return acc + record.items.length;
-    }
-    return acc + 1; // Assuming a record without items is a single line
-  }, 0);
-
-  const formatDate = (dateString: string | null) => {
-    if (!dateString) return '';
-    try {
-        const date = new Date(dateString + 'T00:00:00Z'); // Prevent local timezone from shifting the date
-        return date.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' });
-    } catch (e) {
-        return dateString; // Fallback
-    }
-  };
-
-  let title = '2. Dữ liệu trên Wecare';
-    if (supplierDateRange.start) {
-        title = `Dữ liệu Wecare (Ngày HĐ ${formatDate(supplierDateRange.start)} ±10 ngày)`;
-    }
-
-
-  return (
-    <div className="bg-white dark:bg-card rounded-xl shadow-md p-6 flex flex-col w-1/2 border dark:border-border">
-      <div className="flex justify-between items-center mb-4 flex-shrink-0">
-        <h2 className="text-xl font-bold text-gray-800 dark:text-foreground">{title}</h2>
-      </div>
-      <div className="flex-grow min-h-0">
-        {isFetching ? (
-          <div className="flex justify-center items-center h-full">
-            <div className="flex flex-col items-center">
-              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
-              <p className="mt-3 text-slate-500 dark:text-muted-foreground">Đang tải dữ liệu...</p>
-            </div>
-          </div>
-        ) : (
-          <DataTable 
-            title="Lịch sử mua hàng"
-            data={data} 
-            icon={<svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 text-green-500" fill="none" viewBox="0 0 20 20"><path stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 9l4-4 4 4m0 6l-4 4-4-4" /></svg>}
-            totalCount={totalItems}
-          />
-        )}
-      </div>
-    </div>
-  );
-};
-
 // --- Main App Component ---
 
 const App: React.FC = () => {
@@ -303,6 +239,7 @@ const App: React.FC = () => {
   const [reconciliationResult, setReconciliationResult] = useState<ReconciliationResult | null>(null);
   const [reconciliationTime, setReconciliationTime] = useState<number | null>(null);
   const [supplierDateRange, setSupplierDateRange] = useState<{ start: string | null, end: string | null }>({ start: null, end: null });
+  const [systemFilter, setSystemFilter] = useState<{ start: string | null, end: string | null }>({ start: null, end: null });
 
   const [isSkuMappingModalOpen, setIsSkuMappingModalOpen] = useState(false);
   const [skuMappingsToShow, setSkuMappingsToShow] = useState<SkuMapping[]>([]);
@@ -314,7 +251,6 @@ const App: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [rawErrorData, setRawErrorData] = useState<string | null>(null);
   const [isErrorModalOpen, setIsErrorModalOpen] = useState(false);
-  const [isFeedbackModalOpen, setIsFeedbackModalOpen] = useState(false);
 
   const setErrorMessage = (message: string | null) => {
     setError(message);
@@ -368,15 +304,14 @@ const App: React.FC = () => {
     }
   }, []);
 
-  const fetchSystemData = useCallback(async (supplierId: string, dateRange: {start: string | null}) => {
+  const fetchSystemData = useCallback(async (supplierId: string, dateRange: {start: string | null, end: string | null}) => {
     const supplier = suppliers.find(s => s.id === supplierId);
     if (!accessToken || !supplier) { 
         setSystemData([]); 
         return; 
     }
     
-    // Do not fetch data if there's no valid start date from the invoice.
-    if (!dateRange.start) {
+    if (!dateRange.start || !dateRange.end) {
         setSystemData([]);
         return;
     }
@@ -386,25 +321,19 @@ const App: React.FC = () => {
     setReconciliationResult(null);
 
     try {
-        const centerDate = new Date(dateRange.start);
-        
-        const startDate = new Date(centerDate);
-        startDate.setDate(centerDate.getDate() - 10);
-        const startDateString = startDate.toISOString().split('T')[0];
-
-        const endDate = new Date(centerDate);
-        endDate.setDate(centerDate.getDate() + 10);
-        const endDateString = endDate.toISOString().split('T')[0];
+        const startDateString = dateRange.start;
+        const endDateString = dateRange.end;
 
         const filters = [
-            `cr44a_tenoituong eq '${supplier.name.replace(/'/g, "''")}'`,
+            `crdfd_nhacungcap eq '${supplier.name.replace(/'/g, "''")}'`,
+            `crdfd_trangthaigiaonhan1text ne 'Đã giao'`,
             `createdon ge ${startDateString}T00:00:00Z`,
             `createdon le ${endDateString}T23:59:59Z`
         ];
         
         const filterQuery = `$filter=${filters.join(' and ')}`;
-        const selectQuery = `$select=cr44a_ongia,cr44a_vtay,cr44a_tenhangcal,createdon,cr44a_soluongmua,cr44a_ngayhachtoan`;
-        const apiUrl = `${DYNAMICS_API_BASE_URL}/api/data/v9.2/cr44a_muahangchitiets?${selectQuery}&${filterQuery}`;
+        const selectQuery = `$select=crdfd_gia,crdfd_soluongsanpham,crdfd_tensanphamtext2,createdon`;
+        const apiUrl = `${DYNAMICS_API_BASE_URL}/api/data/v9.2/crdfd_buyorderdetailses?${selectQuery}&${filterQuery}`;
         
         const response = await fetch(apiUrl, { headers: { 'Authorization': `Bearer ${accessToken}` } });
         if (!response.ok) throw new Error(`Lỗi tải dữ liệu hệ thống: ${await getApiErrorMessage(response)}`);
@@ -417,11 +346,11 @@ const App: React.FC = () => {
         }
 
         const mappedData: ReconciliationRecord[] = records.map((item: any) => {
-            const date = item.cr44a_ngayhachtoan ? (item.cr44a_ngayhachtoan).split('T')[0] : (item.createdon).split('T')[0];
-            const quantity = parseFloat(item.cr44a_soluongmua) || 0;
-            const unitPrice = parseFloat(item.cr44a_ongia) || 0;
+            const date = (item.createdon).split('T')[0];
+            const quantity = parseFloat(item.crdfd_soluongsanpham) || 0;
+            const unitPrice = parseFloat(item.crdfd_gia) || 0;
             const totalPrice = quantity * unitPrice;
-            const name = item.cr44a_tenhangcal || 'N/A';
+            const name = item.crdfd_tensanphamtext2 || 'N/A';
             return {
                 id: crypto.randomUUID(),
                 date,
@@ -484,12 +413,21 @@ const App: React.FC = () => {
   // --- Effect Chain ---
   useEffect(() => { fetchAccessToken(); }, [fetchAccessToken]);
   useEffect(() => { if (accessToken) fetchSuppliers(accessToken); }, [accessToken, fetchSuppliers]);
+  
+  useEffect(() => {
+    if (selectedSupplierId && accessToken && systemFilter.start && systemFilter.end) {
+      fetchSystemData(selectedSupplierId, systemFilter);
+    } else {
+      setSystemData([]);
+    }
+  }, [selectedSupplierId, systemFilter, accessToken, fetchSystemData]);
+
   useEffect(() => { 
     if (selectedSupplierId && accessToken) {
-      fetchSystemData(selectedSupplierId, supplierDateRange); 
       fetchExistingMappings(selectedSupplierId);
     }
-  }, [selectedSupplierId, supplierDateRange, fetchSystemData, fetchExistingMappings, accessToken]);
+  }, [selectedSupplierId, fetchExistingMappings, accessToken]);
+
 
   const handleFileChange = (files: File[]) => {
     setUploadedFiles(prev => [...prev, ...files]);
@@ -537,16 +475,26 @@ const App: React.FC = () => {
         .filter((d): d is Date => d !== null && !isNaN(d.getTime()));
 
       if (validDates.length > 0) {
-        // Instead of a range, pick the most recent date from the uploaded documents
-        // as the primary invoice date for comparison.
         const maxDate = new Date(Math.max(...validDates.map(d => d.getTime())));
         
         setSupplierDateRange({ 
             start: maxDate.toISOString().split('T')[0],
-            end: null, // End date is no longer used for fetching system data
+            end: null,
         });
+
+        const centerDate = maxDate;
+        const startDate = new Date(centerDate);
+        startDate.setDate(centerDate.getDate() - 10);
+        const endDate = new Date(centerDate);
+        endDate.setDate(centerDate.getDate() + 10);
+        setSystemFilter({
+          start: startDate.toISOString().split('T')[0],
+          end: endDate.toISOString().split('T')[0],
+        });
+
       } else {
         setSupplierDateRange({ start: null, end: null });
+        setSystemFilter({ start: null, end: null });
       }
     }
     
@@ -562,6 +510,7 @@ const App: React.FC = () => {
     setReconciliationResult(null);
     setErrorMessage(null);
     setSupplierDateRange({ start: null, end: null });
+    setSystemFilter({ start: null, end: null });
     setReconciliationTime(null);
   };
   
@@ -832,7 +781,6 @@ const App: React.FC = () => {
             selectedSupplierId={selectedSupplierId}
             onSupplierChange={setSelectedSupplierId}
             isLoading={isLoading.suppliers || isLoading.systemData}
-            onOpenFeedback={() => setIsFeedbackModalOpen(true)}
           />
 
           <main className="flex-grow px-4 sm:px-6 lg:px-8 py-8 flex flex-col min-h-0">
@@ -864,7 +812,7 @@ const App: React.FC = () => {
               </div>
             ) : (
               <>
-                <div className={`flex-grow flex flex-row gap-8 min-h-0`}>
+                <div className={`flex-grow flex flex-col lg:flex-row gap-8 min-h-0`}>
                   <SupplierDataPanel
                     uploadedFiles={uploadedFiles}
                     processedFiles={processedFiles}
@@ -881,7 +829,9 @@ const App: React.FC = () => {
                   <SystemDataPanel
                     isFetching={isLoading.systemData}
                     data={systemData}
-                    supplierDateRange={supplierDateRange}
+                    filterRange={systemFilter}
+                    onFilterChange={setSystemFilter}
+                    canFilter={!!selectedSupplierId}
                   />
                 </div>
 
@@ -921,10 +871,6 @@ const App: React.FC = () => {
           />
         </>
       )}
-      <FeedbackModal 
-        isOpen={isFeedbackModalOpen}
-        onClose={() => setIsFeedbackModalOpen(false)}
-      />
     </div>
   );
 };
